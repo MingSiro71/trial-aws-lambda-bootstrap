@@ -1,0 +1,46 @@
+#!/usr/local/bin/ruby
+require 'net/http'
+require 'json'
+
+function = ENV['_HANDLER'] ? ENV['_HANDLER'].split(".")[0] : "lambda_function"
+handler = ENV['_HANDLER'] ? ENV['_HANDLER'].split(".")[1] : "lambda_handler"
+taskroot = ENV['LAMBDA_TASK_ROOT'] ? ENV['LAMBDA_TASK_ROOT'] : "/var/task" 
+extention = 'rb'
+# Initialization - load function handler
+require "#{taskroot}/#{function}.#{extention}"
+puts "require: #{taskroot}/#{function}.#{extention}"
+puts ENV.inspect
+
+# Processing
+host = ENV['AWS_LAMBDA_RUNTIME_API']
+uri = '2018-06-01/runtime/invocation'
+while true do
+  get_uri = URI.parse("http://#{host}/#{uri}/next")
+  response = Net::HTTP.get_response(get_uri)
+  puts "Status: #{response.code} from http://#{host}/#{uri}/next"
+
+  hash = response.each do |key, val|
+    { key => val }
+  end
+
+  puts hash.inspect
+
+  begin
+    requestId = hash["lambda-runtime-aws-request-id"][0]
+    deadline = hash["lambda-runtime-deadline-ms"][0]
+    functionArn = hash["lambda-runtime-invoked-function-arn"][0]
+    traceId = hash["lambda-runtime-trace-id"][0]
+
+    puts "Fetched requestId: #{requestId}"
+    puts "Body: #{response.body}"
+
+    eventData = JSON.parse(response.body)
+    result = LambdaFunction::lambda_handler( event: eventData, context: {} )
+    
+    post_uri = URI.parse("http://#{host}/#{uri}/#{requestId}/response")
+    response = Net::HTTP.post_form(post_uri, { "message" => "OK" })
+    puts "Status: #{response.code} from http://#{host}/#{uri}/#{requestId}/response"
+  rescue => e
+    puts e.to_s
+  end
+end
